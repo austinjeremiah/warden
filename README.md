@@ -8,6 +8,8 @@ Warden is **domain-agnostic**: quality isn't hardcoded, it's a data-driven polic
 
 > **Warden releases escrow only when the delivered code provably passes the buyer's tests — verified by execution, not judgment.**
 
+**Live on CROO:** [agent.croo.network/agents/f09fc9fc…08d5](https://agent.croo.network/agents/f09fc9fc-f55b-44da-985c-024e81fe08d5) · **Base Mainnet** (chain 8453) · **real USDC** (no testnet) · gas sponsored via the Paymaster.
+
 ---
 
 ## The gap Warden fills
