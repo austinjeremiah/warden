@@ -6,10 +6,16 @@
   "license": "MIT",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "agents": "tsx src/scripts/agents.ts",
     "warden": "tsx src/warden/index.ts",
     "providerA": "tsx src/demo-providers/providerA.ts",
     "providerB": "tsx src/demo-providers/providerB.ts",
     "buyer": "tsx src/demo-buyer/buyer.ts",
+    "stop": "bash kill-agents.sh",
+    "check": "tsx src/scripts/checkAgents.ts",
+    "balances": "tsx src/scripts/balances.ts",
+    "test:policies": "tsx src/scripts/testPolicies.ts",
+    "test:sandbox": "tsx src/scripts/testSandbox.ts",
     "smoke": "tsx src/scripts/smoke.ts"
   },
   "dependencies": {

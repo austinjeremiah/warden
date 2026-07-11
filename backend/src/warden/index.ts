@@ -190,7 +190,7 @@ async function failJob(client: any, log: any, job: Job, reason: string): Promise
   try {
     await client.rejectOrder(job.orderAId, reason);
     job.status = 'settled_fail';
-    log.info(`⛔ AUDIT FAIL ${JSON.stringify({ decision: 'FAIL', reason, orderA: job.orderAId, orderB: job.orderBId })}`);
+    log.info(`AUDIT FAIL  orderA=${job.orderAId} orderB=${job.orderBId ?? '-'} reason="${reason}" action=rejected Order A (buyer refunded)`);
   } catch (err) {
     job.status = 'error';
     log.error(`failed to reject Order A ${job.orderAId}:`, (err as Error).message);

@@ -12,12 +12,24 @@ import { makeLogger, Logger } from './logger.js';
  */
 export function makeClient(sdkKey: string, tag: string): { client: AgentClient; log: Logger } {
   const log = makeLogger(tag);
+
+  // The SDK logs its own internal chatter (websocket connecting, received
+  // message, order paid, ...) at info level. Route that to debug so the demo
+  // terminal only shows Warden's own narrative. Warnings/errors still surface.
+  // Run with DEBUG=1 to see the raw SDK/protocol traffic.
+  const sdkLogger: Logger = {
+    info: (m, ...a) => log.debug(m, ...a),
+    debug: (m, ...a) => log.debug(m, ...a),
+    warn: (m, ...a) => log.warn(m, ...a),
+    error: (m, ...a) => log.error(m, ...a),
+  };
+
   const client = new AgentClient(
     {
       baseURL: crooEndpoints.baseURL,
       wsURL: crooEndpoints.wsURL,
       rpcURL: crooEndpoints.rpcURL,
-      logger: log,
+      logger: sdkLogger,
     },
     sdkKey,
   );

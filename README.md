@@ -85,7 +85,7 @@ Warden runs **untrusted code from an anonymous provider** and lets the result mo
 - host-side kill timer — hard wall-clock timeout even if Docker hangs
 - fresh temp workdir per job, bind-mounted read-only, destroyed after
 
-Verified offline (`npx tsx src/scripts/testSandbox.ts`): correct code passes, buggy code fails the specific test, and **code that tries to open a network socket is blocked** (`Network is unreachable`).
+Verified offline (`npm run test:sandbox`): correct code passes, buggy code fails the specific test, and **code that tries to open a network socket is blocked** (`Network is unreachable`).
 
 Example bundle a buyer sends in the order requirements:
 
@@ -103,7 +103,7 @@ Example bundle a buyer sends in the order requirements:
 
 Output is `{ pass, reason, policy }` — `policy` names the deciding policy. On failure, `reason` is a human-readable string passed directly into `rejectOrder`. (Legacy `acceptanceCriteria` + `requiredFields` are still accepted and auto-synthesized into a bundle.)
 
-Run the offline proof (no funds, no chain): `npx tsx src/scripts/testPolicies.ts`.
+Run the offline proof (no funds, no chain): `npm run test:policies`.
 
 ---
 
@@ -111,15 +111,15 @@ Run the offline proof (no funds, no chain): `npx tsx src/scripts/testPolicies.ts
 
 **Real, on-chain, settles/refunds real USDC today:**
 - Two-order composition (Warden as Provider + Requester in one process)
-- Structural + semantic quality gate
-- Pass → `deliverOrder` (release), Fail → `rejectOrder` (refund), immediate reject on provider failure
-- Nonce-safe serialized `payOrder` queue (Risk #3), single WS per key (Risk #2)
+- Pluggable policy engine — structural, substring/regex, JSON-schema, semantic (Groq), and **executable `code_tests`** run in a hardened Docker sandbox
+- Pass → `deliverOrder` (release), Fail → `rejectOrder` (refund); immediate reject on provider failure
+- Nonce-safe serialized `payOrder` queue (one in-flight wallet tx at a time) and a single WebSocket per API key
 
 **Roadmap — NOT built:**
-- Richer policy evaluators: run a passing test suite, verify an image at a target resolution, check citations resolve, call an external oracle
+- More policy evaluators: verify an image at a target resolution, check that cited URLs resolve, call an external oracle, multi-language sandboxes
+- Auto-remediation (retry / provider failover before refund) and best-of-N provider routing
 - Multi-juror weighted consensus / staking / slashing across independent validators
-- Historical precedent / case-law retrieval
-- Continuous fraud-pattern learning
+- Historical precedent / case-law retrieval; continuous fraud-pattern learning
 
 The policy engine is the extensibility surface: each of the above is a new evaluator registered in `policies.ts`, no core change. These are the natural v2 once CAP exposes `evaluateOrder` to third-party builders — at which point Warden's policy engine plugs directly into the protocol-native DELIVER phase instead of requiring order composition.
 
@@ -159,8 +159,8 @@ backend/src/
 ├── shared/
 │   ├── env.ts         # env loader + shared CROO endpoints
 │   ├── logger.ts      # tagged, colorized per-process logger (also SDK Logger)
-│   ├── client.ts      # AgentClient factory — one client/one WS per key (Risk #2)
-│   ├── payQueue.ts    # p-queue concurrency:1 — serialize payOrder (Risk #3)
+│   ├── client.ts      # AgentClient factory — one client / one WebSocket per key
+│   ├── payQueue.ts    # p-queue concurrency:1 — serializes payOrder (nonce safety)
 │   └── groq.ts        # thin Groq chat wrapper
 ├── warden/
 │   ├── index.ts       # orchestrator: both roles on one WS, routes by job id
@@ -174,8 +174,13 @@ backend/src/
 │   ├── providerA.ts    # GOOD path
 │   └── providerB.ts    # BAD path (FORCE_BAD_OUTPUT demo toggle)
 ├── demo-buyer/
-│   └── buyer.ts        # hires Warden; `npm run buyer` (good) / `-- bad`
+│   └── buyer.ts        # hires Warden; modes: good | bad | code | codebad
 └── scripts/
+    ├── agents.ts       # launcher: Provider A + B + Warden in one terminal
+    ├── checkAgents.ts  # verify all agents connect (read-only)
+    ├── balances.ts     # on-chain USDC balances of the agent wallets
+    ├── testPolicies.ts # offline policy-engine proof
+    ├── testSandbox.ts  # offline sandbox proof (good / buggy / malicious)
     └── smoke.ts        # connectivity smoke test
 ```
 
@@ -191,26 +196,31 @@ npm install
 cp .env.example .env    # then fill in real keys/wallets/serviceIds + GROQ_API_KEY
 ```
 
-Each agent = its **own** API key. Fund the **agent AA wallets** (not the account wallet, not the controller):
-- **Buyer** agent wallet — to pay Order A
-- **Warden** agent wallet — float, to pay Order B before Order A releases
-- Providers receive only (no funding needed)
+Each agent = its **own** API key. Fund the **agent AA wallets** (not the account wallet, not the controller). Because CAP uses a **USDC paymaster**, gas is paid in USDC from the sending wallet — so every agent that submits a transaction needs a small USDC balance:
+- **Buyer** — order price + gas
+- **Warden** — float to pay Order B before Order A releases, + gas
+- **Provider A / B** — a small gas float (they submit `acceptNegotiation` and `deliverOrder`); ~0.1 USDC each is plenty
 
-### Run (each is a separate process / terminal)
+### Run
+
+Start the three services in one terminal, then drive them from another:
 
 ```bash
-npm run providerA         # good-path provider
-npm run providerB         # bad-path provider (FORCE_BAD_OUTPUT=true)
-npm run warden            # the gateway
-npm run buyer             # GOOD (text) — routes Warden to Provider A
-npm run buyer -- bad      # BAD  (text) — Provider B forced-bad → refund
-npm run buyer -- code     # GOOD (code) — Provider A code passes sandbox tests → release
-npm run buyer -- codebad  # BAD  (code) — Provider B non-code fails sandbox → refund
+npm run agents            # starts Provider A + Provider B + Warden (one terminal)
 ```
 
-Offline proofs (no funds, no chain): `npx tsx src/scripts/testPolicies.ts` and `npx tsx src/scripts/testSandbox.ts` (the latter needs Docker).
+```bash
+npm run buyer             # GOOD (text) — policies pass → delivered
+npm run buyer -- bad      # BAD  (text) — `contains` fails → refunded
+npm run buyer -- code     # GOOD (code) — code passes sandbox tests → released
+npm run buyer -- codebad  # BAD  (code) — non-code fails sandbox → refunded
+```
 
-> **One WebSocket per API key.** Never run two processes with the same key; kill the old one first (CAP boots the second with close code 1008).
+Services can also be run individually: `npm run warden`, `npm run providerA`, `npm run providerB`.
+
+Offline proofs (no funds, no chain): `npm run test:policies` and `npm run test:sandbox` (the latter needs Docker). Verify connectivity with `npm run check`; inspect balances with `npm run balances`.
+
+> **One WebSocket per API key.** Never run two processes with the same key. Stop services with `Ctrl+C` (graceful close); a hard kill leaves the session held server-side and the next start is rejected with close code 1008 until it times out.
 
 ---
 

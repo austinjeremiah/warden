@@ -98,8 +98,8 @@ async function main() {
   stream.on(EventType.OrderCompleted, async (e) => {
     if (e.order_id !== myOrderAId) return; // not ours
     const delivery = await client.getDelivery(myOrderAId);
-    log.info(`✅ RECEIVED VERIFIED RESULT for Order A ${myOrderAId}:`);
-    log.info(`   "${delivery.deliverableText}"`);
+    log.info(`VERIFIED RESULT RECEIVED for Order A ${myOrderAId} (escrow released to Warden):`);
+    log.info(`   ${delivery.deliverableText.replace(/\n/g, '\n   ')}`);
     stream.close();
     process.exit(0);
   });
@@ -107,7 +107,7 @@ async function main() {
   // BAD path: Warden's gate failed -> it rejected Order A -> we were refunded.
   stream.on(EventType.OrderRejected, (e) => {
     if (e.order_id !== myOrderAId) return; // not ours
-    log.info(`⛔ Order A ${myOrderAId} REJECTED by Warden -> escrow refunded to buyer.`);
+    log.info(`ORDER A REJECTED by Warden -> escrow refunded to buyer. Order ${myOrderAId}`);
     log.info(`   reason: ${e.reason ?? '(see Warden logs)'}`);
     stream.close();
     process.exit(0);

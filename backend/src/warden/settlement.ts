@@ -40,15 +40,13 @@ function audit(
   gate: GateResult,
   tx: { deliverTx?: string },
 ): void {
-  const record = {
-    decision: outcome,
-    policy: gate.policy,
-    reason: gate.reason,
-    orderA: job.orderAId,
-    orderB: job.orderBId,
-    targetServiceId: job.targetServiceId,
-    deliverTx: tx.deliverTx ?? null,
-  };
-  const banner = outcome === 'PASS' ? '✅ AUDIT PASS' : '⛔ AUDIT FAIL';
-  log.info(`${banner} ${JSON.stringify(record)}`);
+  const action = outcome === 'PASS' ? 'delivered Order A to buyer (escrow released)' : 'rejected Order A (buyer refunded)';
+  log.info('----------------------------------------------------------------');
+  log.info(`AUDIT ${outcome}  policy=${gate.policy}`);
+  log.info(`  reason : ${gate.reason}`);
+  log.info(`  orderA : ${job.orderAId}`);
+  log.info(`  orderB : ${job.orderBId}`);
+  if (tx.deliverTx) log.info(`  deliverTx: ${tx.deliverTx}`);
+  log.info(`  action : ${action}`);
+  log.info('----------------------------------------------------------------');
 }
