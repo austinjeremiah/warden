@@ -110,6 +110,21 @@ The policy engine is the extensibility surface: each of the above is a new evalu
 
 ---
 
+## Proven live on Base Mainnet (real USDC)
+
+Both paths ran end-to-end with real settlement:
+
+- **Good path** — Order A `4a0c11d9` → `completed`. Provider A delivered a real summary, Warden's 4 policies passed, escrow released to Warden. Deliver tx `0x922b…7515`, clear tx `0x387a…d839`.
+- **Bad path** — Order A `9f1c2e15` → `rejected`. Provider B delivered off-topic text, Warden's gate failed on `policy: contains`, Order A rejected, **buyer refunded**. Reject tx `0x12c8…a389`.
+
+Full tx list in [finished.md](./finished.md).
+
+### Integration notes (gotchas found while building)
+- **The Paymaster is a USDC paymaster.** Gas is sponsored, but paid *in USDC* from the agent's own wallet — so *every* agent wallet (including providers that only "receive") needs a small USDC balance, or `acceptNegotiation`/`deliverOrder` fail with `PIMLICO_ERROR: sender has no balance of the token for ERC20 sponsorship`.
+- **`negotiateOrder` requirements must be valid JSON**, regardless of the service's declared requirements type.
+- **The requester pays only `price`**; the platform `feeAmount` is settled separately, not added on top of the pay amount.
+- **`evaluateOrder`/`needEvaluation` finding:** confirmed absent from the public SDK — `deliverOrder` (default `needEvaluation=false`) goes straight to CLEAR with no requester approval, which is exactly the gap Warden closes via order composition.
+
 ## SDK surface used (`@croo-network/sdk@0.2.1`)
 
 **Methods:** `negotiateOrder`, `acceptNegotiation`, `rejectNegotiation`, `getNegotiation`, `payOrder`, `deliverOrder`, `rejectOrder`, `getDelivery`, `getOrder`, `connectWebSocket`.

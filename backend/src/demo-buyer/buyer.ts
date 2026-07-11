@@ -45,15 +45,22 @@ async function main() {
     ],
   });
 
+  // Track ONLY our own negotiation/order so stale or unrelated orders on the
+  // same WS are ignored (a naive "act on any order" buyer double-pays leftovers).
+  let myNegotiationId = '';
+  let myOrderAId = '';
+
   const stream = await client.connectWebSocket();
   log.info(`online. mode=${mode.toUpperCase()} -> target=${targetServiceId}. Hiring Warden...`);
 
-  // Pay Order A when Warden accepts our negotiation and the order is created.
+  // Pay Order A when Warden accepts OUR negotiation and creates the order.
   stream.on(EventType.OrderCreated, async (e) => {
+    if (e.negotiation_id !== myNegotiationId) return; // not ours
+    myOrderAId = e.order_id!;
     try {
-      log.info(`Order A ${e.order_id} created by Warden. Paying escrow...`);
-      const res = await client.payOrder(e.order_id!);
-      log.info(`paid Order A ${e.order_id} (tx ${res.txHash}). Waiting for verified delivery or refund...`);
+      log.info(`Order A ${myOrderAId} created by Warden. Paying escrow...`);
+      const res = await client.payOrder(myOrderAId);
+      log.info(`paid Order A ${myOrderAId} (tx ${res.txHash}). Waiting for verified delivery or refund...`);
     } catch (err) {
       log.error(`payOrder failed:`, (err as Error).message);
       process.exit(1);
@@ -62,8 +69,9 @@ async function main() {
 
   // GOOD path: Warden's gate passed and it delivered the verified result.
   stream.on(EventType.OrderCompleted, async (e) => {
-    const delivery = await client.getDelivery(e.order_id!);
-    log.info(`✅ RECEIVED VERIFIED RESULT for Order A ${e.order_id}:`);
+    if (e.order_id !== myOrderAId) return; // not ours
+    const delivery = await client.getDelivery(myOrderAId);
+    log.info(`✅ RECEIVED VERIFIED RESULT for Order A ${myOrderAId}:`);
     log.info(`   "${delivery.deliverableText}"`);
     stream.close();
     process.exit(0);
@@ -71,14 +79,16 @@ async function main() {
 
   // BAD path: Warden's gate failed -> it rejected Order A -> we were refunded.
   stream.on(EventType.OrderRejected, (e) => {
-    log.info(`⛔ Order A ${e.order_id} REJECTED by Warden -> escrow refunded to buyer.`);
+    if (e.order_id !== myOrderAId) return; // not ours
+    log.info(`⛔ Order A ${myOrderAId} REJECTED by Warden -> escrow refunded to buyer.`);
     log.info(`   reason: ${e.reason ?? '(see Warden logs)'}`);
     stream.close();
     process.exit(0);
   });
 
   const neg = await client.negotiateOrder({ serviceId: wardenServiceId, requirements });
-  log.info(`negotiation opened: ${neg.negotiationId}. Waiting for Warden to accept + create Order A...`);
+  myNegotiationId = neg.negotiationId;
+  log.info(`negotiation opened: ${myNegotiationId}. Waiting for Warden to accept + create Order A...`);
 
   process.on('SIGINT', () => {
     stream.close();

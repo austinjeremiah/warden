@@ -109,7 +109,8 @@ async function main() {
       log.info(`Order A ${job.orderAId} PAID by buyer. Hiring target provider ${job.targetServiceId}...`);
       const negB = await client.negotiateOrder({
         serviceId: job.targetServiceId,
-        requirements: job.buyerInput,
+        // CAP requires `requirements` to be valid JSON — wrap the task as an object.
+        requirements: JSON.stringify({ input: job.buyerInput }),
       });
       jobs.setNegotiationB(job, negB.negotiationId);
       log.info(`opened Order B negotiation ${negB.negotiationId} with provider.`);
