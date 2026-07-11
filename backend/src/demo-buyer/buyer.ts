@@ -1,5 +1,5 @@
 import { EventType } from '@croo-network/sdk';
-import { required, optional } from '../shared/env.js';
+import { required } from '../shared/env.js';
 import { makeClient } from '../shared/client.js';
 
 /**
@@ -8,8 +8,9 @@ import { makeClient } from '../shared/client.js';
  * Usage:
  *   npm run buyer            # GOOD  (text)  -> Provider A, expect verified delivery
  *   npm run buyer -- bad     # BAD   (text)  -> Provider B (forced-bad), expect refund
- *   npm run buyer -- code    # GOOD  (code)  -> Provider A, code passes sandbox tests
- *   npm run buyer -- codebad # BAD   (code)  -> Provider B (forced-bad), tests fail, refund
+ *   npm run buyer -- code    # GOOD  (python code) -> Provider A, code passes sandbox tests
+ *   npm run buyer -- codebad # BAD   (python code) -> Provider B (forced-bad), tests fail, refund
+ *   npm run buyer -- codejs  # GOOD  (js code)     -> Provider A, JS passes node sandbox tests
  *
  * The buyer only ever touches Order A: negotiate -> pay -> receive result OR refund.
  */
@@ -28,8 +29,32 @@ const PALINDROME_TESTS = [
   'def test_case(): assert is_palindrome("RaceCar") == True',
 ].join('\n');
 
+// Same acceptance criteria expressed as JavaScript tests (run in the node sandbox).
+const JS_PALINDROME_TESTS = [
+  'function test_basic(){ assert.strictEqual(isPalindrome("racecar"), true) }',
+  'function test_phrase(){ assert.strictEqual(isPalindrome("A man, a plan, a canal: Panama"), true) }',
+  'function test_negative(){ assert.strictEqual(isPalindrome("hello"), false) }',
+  'function test_empty(){ assert.strictEqual(isPalindrome(""), true) }',
+  'function test_case(){ assert.strictEqual(isPalindrome("RaceCar"), true) }',
+].join('\n');
+
 /** Returns { input, policies } for the chosen demo mode. */
 function buildTask(mode: string) {
+  if (mode === 'codejs' || mode === 'codejsbad') {
+    return {
+      input:
+        'Write a JavaScript function `isPalindrome(s)` that returns true if the string reads the same ' +
+        'forwards and backwards, ignoring case and all non-alphanumeric characters, else false. ' +
+        'Return only the function definition, no module.exports.',
+      policies: [
+        {
+          type: 'code_tests',
+          language: 'javascript',
+          tests: JS_PALINDROME_TESTS,
+        },
+      ],
+    };
+  }
   if (mode === 'code' || mode === 'codebad') {
     return {
       input:
@@ -59,7 +84,7 @@ function buildTask(mode: string) {
 async function main() {
   const mode = (process.argv[2] || 'good').toLowerCase();
   const wardenServiceId = required('WARDEN_SERVICE_ID');
-  const badMode = mode === 'bad' || mode === 'codebad';
+  const badMode = mode === 'bad' || mode === 'codebad' || mode === 'codejsbad';
   const targetServiceId = badMode
     ? required('PROVIDER_B_SERVICE_ID')
     : required('PROVIDER_A_SERVICE_ID');

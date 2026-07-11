@@ -50,6 +50,8 @@ Escrow releases only on a green suite. `src/warden/sandbox.ts` + `code_tests` po
 - **`url_resolve`** — every cited URL in the delivery must resolve (HTTP < 400); catches fabricated citations.
 - **`image_min_resolution`** — a delivered image (URL, data URI, or base64) must meet minimum pixel dimensions (`image-size`).
 - Offline proof (`npm run test:extras`): JS good passes / buggy fails, live URL resolves / `.invalid` fails, 1024x768 passes >= 800x600 / 320x240 fails. All wired into the same on-chain settlement path as the other policies.
+- **JavaScript code_tests proven ON-CHAIN** — Order A `62ff8195` → `completed`. Provider A wrote real JS `isPalindrome`, Warden ran it in the `node:20-slim` sandbox → all tests pass → escrow released. Deliver tx `0x1bbb08ee5640f5ac7fdba9acf2a4bfea1471d113fe160ee0ce98a5ee406b5918`, clear tx `0x2d2b0e242e6e3114142fa90913c54ebf6cede1f37b4e4bb76827045c6c965daa`. Run: `npm run buyer -- codejs`.
+- `url_resolve` and `image_min_resolution` remain offline-only (a text/code provider cannot deterministically deliver a live URL or a real image); the on-chain settlement path is identical to the code paths already proven.
 
 **Key integration findings (from live testing):**
 - CAP's Paymaster is a **USDC paymaster** — every agent wallet (incl. providers) needs a small USDC balance for gas, or accept/deliver fails with `PIMLICO_ERROR: sender has no balance of the token`.

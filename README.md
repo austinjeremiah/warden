@@ -139,6 +139,7 @@ Both paths ran end-to-end with real settlement:
 - **Bad path (text)** — Order A `9f1c2e15` → `rejected`. Provider B delivered off-topic text, Warden's gate failed on `policy: contains`, Order A rejected, **buyer refunded**. Reject tx `0x12c8…a389`.
 - **Good path (code)** — Order A `f1d73efd` → `completed`. Provider A wrote a real `is_palindrome`, **Warden ran it against the buyer's 5 tests in a Docker sandbox → all passed → escrow released.** Deliver tx `0xce95…15e4`.
 - **Bad path (code)** — Order A `c7fa2b0b` → `rejected`. Provider B delivered non-code, **the sandbox load failed (`SyntaxError`) → `policy: code_tests` failed → buyer refunded.** Reject tx `0xf123…7f4f`.
+- **Good path (JavaScript)** — Order A `62ff8195` → `completed`. Provider A wrote a real JS `isPalindrome`, **Warden ran it in the `node:20-slim` sandbox → all tests passed → escrow released** — proving multi-language verification on-chain. Deliver tx `0x1bbb…5918`, clear tx `0x2d2b…5daa`.
 
 Full tx list in [finished.md](./finished.md).
 
@@ -217,8 +218,9 @@ npm run agents            # starts Provider A + Provider B + Warden (one termina
 ```bash
 npm run buyer             # GOOD (text) — policies pass → delivered
 npm run buyer -- bad      # BAD  (text) — `contains` fails → refunded
-npm run buyer -- code     # GOOD (code) — code passes sandbox tests → released
-npm run buyer -- codebad  # BAD  (code) — non-code fails sandbox → refunded
+npm run buyer -- code     # GOOD (Python code) — passes sandbox tests → released
+npm run buyer -- codebad  # BAD  (Python code) — non-code fails sandbox → refunded
+npm run buyer -- codejs   # GOOD (JavaScript)  — passes node sandbox tests → released
 ```
 
 Services can also be run individually: `npm run warden`, `npm run providerA`, `npm run providerB`.
