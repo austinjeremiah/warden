@@ -1,4 +1,5 @@
 import { chat } from '../shared/groq.js';
+import { runCodeTests } from './sandbox.js';
 
 /**
  * Pluggable policy engine — the heart of Warden's value proposition.
@@ -39,6 +40,13 @@ const ERROR_PREFIXES = ['error', 'traceback', 'exception', 'undefined', 'null'];
 
 function text(ctx: PolicyContext): string {
   return (ctx.deliverableText ?? '').trim();
+}
+
+/** Strip markdown code fences an LLM may wrap around delivered source. */
+function stripFences(s: string): string {
+  const t = (s ?? '').trim();
+  const m = t.match(/^```[a-zA-Z0-9]*\n([\s\S]*?)\n```$/);
+  return (m ? m[1] : t).trim();
 }
 
 export const POLICY_REGISTRY: Record<string, Evaluator> = {
@@ -119,6 +127,28 @@ export const POLICY_REGISTRY: Record<string, Evaluator> = {
     return missing.length === 0
       ? { pass: true, reason: `has fields [${fields.join(', ')}]` }
       : { pass: false, reason: `Delivery missing required field(s): [${missing.join(', ')}].` };
+  },
+
+  // Executable, objective verification: run the delivered code against the
+  // buyer's test suite inside a hardened Docker sandbox. Escrow releases only
+  // if every test passes. This is "quality" as a FACT, not an LLM opinion.
+  code_tests: async (p, ctx) => {
+    const testsCode = String(p.tests ?? '');
+    if (!testsCode.trim()) return { pass: false, reason: 'code_tests policy provided no tests.' };
+    const solution = stripFences(ctx.deliverableText);
+    if (!solution) return { pass: false, reason: 'No code was delivered to test.' };
+
+    const res = await runCodeTests(solution, testsCode);
+    if (res.runnerError) return { pass: false, reason: `Sandbox error: ${res.runnerError}` };
+    if (res.loadError) return { pass: false, reason: `Delivered code failed to load: ${res.loadError}` };
+
+    const total = res.passed.length + res.failed.length;
+    if (res.ok) return { pass: true, reason: `All ${res.passed.length}/${total} tests passed in sandbox.` };
+    const first = res.failed[0];
+    return {
+      pass: false,
+      reason: `${res.passed.length}/${total} tests passed. First failure: ${first ? `${first.name} — ${first.error}` : 'no tests ran'}.`,
+    };
   },
 
   semantic: async (p, ctx) => {

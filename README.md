@@ -4,7 +4,9 @@
 
 CAP standardizes negotiation, escrow, delivery, and settlement — but once a Provider calls `deliverOrder`, funds release automatically with **zero Requester approval**. Warden is a CAP-native agent that sits between buyer and provider as **both Provider and Requester simultaneously**, and releases escrow only when the delivery satisfies a **pluggable bundle of quality policies** attached to the order — using nothing but composed Orders, escrow, and the existing reject/refund path. No invented protocol features. No dispute state that doesn't exist. Just correct use of what CAP already ships.
 
-Warden is **domain-agnostic**: quality isn't hardcoded, it's a data-driven policy bundle. A policy might require a JSON schema, a substring/citation, a regex format, a minimum length, or a semantic match against buyer criteria. Warden simply executes the bundle attached to the order.
+Warden is **domain-agnostic**: quality isn't hardcoded, it's a data-driven policy bundle. A policy might require a JSON schema, a substring/citation, a regex format, a minimum length, a semantic match against buyer criteria — or, at the strongest end, **the delivered code passing the buyer's own test suite, executed inside a hardened sandbox.** For code work, "quality" stops being an opinion and becomes a fact:
+
+> **Warden releases escrow only when the delivered code provably passes the buyer's tests — verified by execution, not judgment.**
 
 Built for the **CROO Agent Hackathon**. Runs on **Base Mainnet** with **real USDC** (chain 8453 — CAP has no testnet). Gas is sponsored via the Paymaster; agents hold only USDC.
 
@@ -69,6 +71,21 @@ The buyer attaches a **policy bundle** to the order. Warden executes it fail-fas
 | `json_valid` | parses as JSON |
 | `json_fields` | JSON contains non-empty required fields |
 | `semantic` | one Groq call (`llama-3.3-70b-versatile`) judging the delivery against buyer criteria; **fails closed** if the judge is unreachable |
+| `code_tests` | **runs the delivered code against the buyer's test suite inside a hardened Docker sandbox** — escrow releases only if every test passes (objective, not an opinion) |
+
+### `code_tests`: verifiable execution (the strongest policy)
+
+Warden runs **untrusted code from an anonymous provider** and lets the result move real money — so the sandbox is locked down on every axis (`src/warden/sandbox.ts`):
+
+- `--network=none` — no network (can't exfiltrate Warden's wallet key)
+- `--read-only` + `--tmpfs` — immutable root filesystem, tiny writable scratch only
+- `--user 65534:65534` — non-root (nobody)
+- `--memory`/`--cpus`/`--pids-limit` — no memory bomb, CPU hog, or fork bomb
+- `--cap-drop ALL` + `--security-opt no-new-privileges` — no Linux caps, no privilege escalation
+- host-side kill timer — hard wall-clock timeout even if Docker hangs
+- fresh temp workdir per job, bind-mounted read-only, destroyed after
+
+Verified offline (`npx tsx src/scripts/testSandbox.ts`): correct code passes, buggy code fails the specific test, and **code that tries to open a network socket is blocked** (`Network is unreachable`).
 
 Example bundle a buyer sends in the order requirements:
 
@@ -114,8 +131,10 @@ The policy engine is the extensibility surface: each of the above is a new evalu
 
 Both paths ran end-to-end with real settlement:
 
-- **Good path** — Order A `4a0c11d9` → `completed`. Provider A delivered a real summary, Warden's 4 policies passed, escrow released to Warden. Deliver tx `0x922b…7515`, clear tx `0x387a…d839`.
-- **Bad path** — Order A `9f1c2e15` → `rejected`. Provider B delivered off-topic text, Warden's gate failed on `policy: contains`, Order A rejected, **buyer refunded**. Reject tx `0x12c8…a389`.
+- **Good path (text)** — Order A `4a0c11d9` → `completed`. Provider A delivered a real summary, Warden's 4 policies passed, escrow released to Warden. Deliver tx `0x922b…7515`, clear tx `0x387a…d839`.
+- **Bad path (text)** — Order A `9f1c2e15` → `rejected`. Provider B delivered off-topic text, Warden's gate failed on `policy: contains`, Order A rejected, **buyer refunded**. Reject tx `0x12c8…a389`.
+- **Good path (code)** — Order A `f1d73efd` → `completed`. Provider A wrote a real `is_palindrome`, **Warden ran it against the buyer's 5 tests in a Docker sandbox → all passed → escrow released.** Deliver tx `0xce95…15e4`.
+- **Bad path (code)** — Order A `c7fa2b0b` → `rejected`. Provider B delivered non-code, **the sandbox load failed (`SyntaxError`) → `policy: code_tests` failed → buyer refunded.** Reject tx `0xf123…7f4f`.
 
 Full tx list in [finished.md](./finished.md).
 
@@ -147,6 +166,7 @@ backend/src/
 │   ├── index.ts       # orchestrator: both roles on one WS, routes by job id
 │   ├── jobStore.ts    # in-memory job ledger, indexed by order/negotiation ids
 │   ├── policies.ts    # pluggable policy registry + evaluatePolicies engine
+│   ├── sandbox.ts     # hardened Docker runner for the code_tests policy
 │   ├── qualityGate.ts # builds the policy bundle + runs the engine
 │   └── settlement.ts  # deliver/reject decision + on-chain audit log
 ├── demo-providers/
@@ -163,7 +183,7 @@ backend/src/
 
 ## Setup
 
-Requires Node 18+ and four registered CROO agents (Warden, Provider A, Provider B, Buyer).
+Requires Node 18+, four registered CROO agents (Warden, Provider A, Provider B, Buyer), and — for the `code_tests` policy — Docker with the `python:3.11-slim` image (`docker pull python:3.11-slim`).
 
 ```bash
 cd backend
@@ -179,12 +199,16 @@ Each agent = its **own** API key. Fund the **agent AA wallets** (not the account
 ### Run (each is a separate process / terminal)
 
 ```bash
-npm run providerA     # good-path provider
-npm run providerB     # bad-path provider (FORCE_BAD_OUTPUT=true)
-npm run warden        # the gateway
-npm run buyer         # GOOD path  — routes Warden to Provider A
-npm run buyer -- bad  # BAD path   — routes Warden to Provider B (forced-bad → refund)
+npm run providerA         # good-path provider
+npm run providerB         # bad-path provider (FORCE_BAD_OUTPUT=true)
+npm run warden            # the gateway
+npm run buyer             # GOOD (text) — routes Warden to Provider A
+npm run buyer -- bad      # BAD  (text) — Provider B forced-bad → refund
+npm run buyer -- code     # GOOD (code) — Provider A code passes sandbox tests → release
+npm run buyer -- codebad  # BAD  (code) — Provider B non-code fails sandbox → refund
 ```
+
+Offline proofs (no funds, no chain): `npx tsx src/scripts/testPolicies.ts` and `npx tsx src/scripts/testSandbox.ts` (the latter needs Docker).
 
 > **One WebSocket per API key.** Never run two processes with the same key; kill the old one first (CAP boots the second with close code 1008).
 

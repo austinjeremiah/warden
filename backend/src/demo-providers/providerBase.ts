@@ -29,11 +29,22 @@ function parseInstruction(requirements: string | undefined): string {
 
 async function runGoodTask(instruction: string): Promise<string> {
   if (!instruction) return 'No task was provided.';
-  return chat(
-    'You are a professional text-processing service. Complete the user task accurately and concisely. Output ONLY the result — no preamble, no apologies, no markdown fences.',
+  const out = await chat(
+    'You are a professional service agent. Complete the user task accurately and concisely. ' +
+      'If the task asks for code, output ONLY the raw source code that solves it — a complete, runnable ' +
+      'implementation with the exact function/name requested, no explanation. ' +
+      'Never wrap output in markdown fences.',
     instruction,
-    { temperature: 0.2, maxTokens: 400 },
+    { temperature: 0.2, maxTokens: 700 },
   );
+  return stripFences(out);
+}
+
+/** Strip markdown code fences the model may add despite instructions. */
+function stripFences(s: string): string {
+  const t = (s ?? '').trim();
+  const m = t.match(/^```[a-zA-Z0-9]*\n([\s\S]*?)\n```$/);
+  return (m ? m[1] : t).trim();
 }
 
 /**

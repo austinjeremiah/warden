@@ -33,6 +33,17 @@ _Last updated: 2026-07-12_
 - Warden gate **FAIL** on `policy: contains` ("Delivery must contain \"Webb\" but does not")
 - Warden rejects Order A → buyer refunded: `0x12c81ef1dac2146a70151d0fc99e5ed49d6be917eefdf2a4423c828e8ea8a389`
 
+## ✅ v2 — `code_tests` policy: verifiable execution in a hardened Docker sandbox
+
+The flagship upgrade. Warden runs untrusted provider code against the buyer's test
+suite inside a locked-down container (`--network=none --read-only --user nobody
+--cap-drop ALL --memory=128m --pids-limit --no-new-privileges` + host-side timeout).
+Escrow releases only on a green suite. `src/warden/sandbox.ts` + `code_tests` policy.
+
+- Offline proof (`npx tsx src/scripts/testSandbox.ts`): good code passes, buggy code fails the exact test, **malicious network code is blocked** (`Network is unreachable`).
+- **GOOD code path (on-chain)** — Order A `f1d73efd` → `completed`. Provider A wrote real `is_palindrome` → sandbox ran buyer's 5 tests → all pass → delivered. Deliver tx `0xce958e45428aab1bb70ba4410028df147fd8184e15da8720c275a07c64fb15e4`.
+- **BAD code path (on-chain)** — Order A `c7fa2b0b` → `rejected`. Provider B delivered non-code → sandbox load `SyntaxError` → `policy: code_tests` failed → buyer refunded. Reject tx `0xf1234b2199e5831c8e2b5a8b96e73b98c6585829a8358400e67808973fc17f4f`.
+
 **Key integration findings (from live testing):**
 - CAP's Paymaster is a **USDC paymaster** — every agent wallet (incl. providers) needs a small USDC balance for gas, or accept/deliver fails with `PIMLICO_ERROR: sender has no balance of the token`.
 - `requirements` on `negotiateOrder` **must be valid JSON** (Warden now wraps the task as `{input}`).

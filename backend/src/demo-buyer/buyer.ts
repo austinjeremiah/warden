@@ -6,8 +6,10 @@ import { makeClient } from '../shared/client.js';
  * Demo Buyer — a Requester that hires Warden's "Verified Delivery Gateway".
  *
  * Usage:
- *   npm run buyer            # GOOD path -> routes Warden to Provider A
- *   npm run buyer -- bad     # BAD path  -> routes Warden to Provider B (forced-bad)
+ *   npm run buyer            # GOOD  (text)  -> Provider A, expect verified delivery
+ *   npm run buyer -- bad     # BAD   (text)  -> Provider B (forced-bad), expect refund
+ *   npm run buyer -- code    # GOOD  (code)  -> Provider A, code passes sandbox tests
+ *   npm run buyer -- codebad # BAD   (code)  -> Provider B (forced-bad), tests fail, refund
  *
  * The buyer only ever touches Order A: negotiate -> pay -> receive result OR refund.
  */
@@ -17,33 +19,58 @@ const SAMPLE_TEXT =
   'Positioned at the second Lagrange point about 1.5 million kilometers from Earth, it observes the universe primarily in ' +
   'infrared light, allowing it to peer through cosmic dust and study the earliest galaxies formed after the Big Bang.';
 
+// Buyer's definition of done, as executable tests run in Warden's sandbox.
+const PALINDROME_TESTS = [
+  'def test_basic(): assert is_palindrome("racecar") == True',
+  'def test_phrase(): assert is_palindrome("A man, a plan, a canal: Panama") == True',
+  'def test_negative(): assert is_palindrome("hello") == False',
+  'def test_empty(): assert is_palindrome("") == True',
+  'def test_case(): assert is_palindrome("RaceCar") == True',
+].join('\n');
+
+/** Returns { input, policies } for the chosen demo mode. */
+function buildTask(mode: string) {
+  if (mode === 'code' || mode === 'codebad') {
+    return {
+      input:
+        'Write a Python function `is_palindrome(s)` that returns True if the string reads the same ' +
+        'forwards and backwards, ignoring case and all non-alphanumeric characters, else False. ' +
+        'Return only the function definition.',
+      policies: [
+        {
+          type: 'code_tests',
+          language: 'python',
+          tests: PALINDROME_TESTS,
+        },
+      ],
+    };
+  }
+  // text modes
+  return {
+    input: `Summarize the following text in one clear sentence:\n\n${SAMPLE_TEXT}`,
+    policies: [
+      { type: 'min_length', min: 20 },
+      { type: 'contains', value: 'Webb' },
+      { type: 'semantic', criteria: 'A one-sentence, on-topic, factual summary of the James Webb Space Telescope.' },
+    ],
+  };
+}
+
 async function main() {
   const mode = (process.argv[2] || 'good').toLowerCase();
   const wardenServiceId = required('WARDEN_SERVICE_ID');
-  const targetServiceId =
-    mode === 'bad'
-      ? required('PROVIDER_B_SERVICE_ID')
-      : required('PROVIDER_A_SERVICE_ID');
+  const badMode = mode === 'bad' || mode === 'codebad';
+  const targetServiceId = badMode
+    ? required('PROVIDER_B_SERVICE_ID')
+    : required('PROVIDER_A_SERVICE_ID');
 
   const key = required('BUYER_API_KEY');
   const { client, log } = makeClient(key, 'BUYER');
 
   // Programmable quality policies attached to the order. Warden releases escrow
-  // only if EVERY policy passes. The off-topic bad-path delivery fails the
-  // deterministic `contains "Webb"` policy AND the semantic policy.
-  const requirements = JSON.stringify({
-    targetServiceId,
-    input: `Summarize the following text in one clear sentence:\n\n${SAMPLE_TEXT}`,
-    policies: [
-      { type: 'min_length', min: 20 },
-      { type: 'contains', value: 'Webb' },
-      {
-        type: 'semantic',
-        criteria:
-          'A one-sentence, on-topic, factual summary of the James Webb Space Telescope.',
-      },
-    ],
-  });
+  // only if EVERY policy passes.
+  const task = buildTask(mode);
+  const requirements = JSON.stringify({ targetServiceId, input: task.input, policies: task.policies });
 
   // Track ONLY our own negotiation/order so stale or unrelated orders on the
   // same WS are ignored (a naive "act on any order" buyer double-pays leftovers).
