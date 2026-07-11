@@ -70,8 +70,10 @@ The buyer attaches a **policy bundle** to the order. Warden executes it fail-fas
 | `regex` | pattern / format match |
 | `json_valid` | parses as JSON |
 | `json_fields` | JSON contains non-empty required fields |
+| `url_resolve` | every cited URL in the delivery actually resolves (HTTP < 400) — catches fabricated citations |
+| `image_min_resolution` | a delivered image (URL, data URI, or base64) meets minimum pixel dimensions |
 | `semantic` | one Groq call (`llama-3.3-70b-versatile`) judging the delivery against buyer criteria; **fails closed** if the judge is unreachable |
-| `code_tests` | **runs the delivered code against the buyer's test suite inside a hardened Docker sandbox** — escrow releases only if every test passes (objective, not an opinion) |
+| `code_tests` | **runs the delivered code (Python or JavaScript) against the buyer's test suite inside a hardened Docker sandbox** — escrow releases only if every test passes (objective, not an opinion) |
 
 ### `code_tests`: verifiable execution (the strongest policy)
 
@@ -86,6 +88,8 @@ Warden runs **untrusted code from an anonymous provider** and lets the result mo
 - fresh temp workdir per job, bind-mounted read-only, destroyed after
 
 Verified offline (`npm run test:sandbox`): correct code passes, buggy code fails the specific test, and **code that tries to open a network socket is blocked** (`Network is unreachable`).
+
+The runner is **multi-language** — set `"language": "python"` (default) or `"javascript"` on the policy; each runs in its own locked-down image (`python:3.11-slim` / `node:20-slim`). Verified with `npm run test:extras`.
 
 Example bundle a buyer sends in the order requirements:
 
@@ -111,12 +115,12 @@ Run the offline proof (no funds, no chain): `npm run test:policies`.
 
 **Real, on-chain, settles/refunds real USDC today:**
 - Two-order composition (Warden as Provider + Requester in one process)
-- Pluggable policy engine — structural, substring/regex, JSON-schema, semantic (Groq), and **executable `code_tests`** run in a hardened Docker sandbox
+- Pluggable policy engine — structural, substring/regex, JSON-schema, URL-resolution, image-resolution, semantic (Groq), and **executable `code_tests`** (Python or JavaScript) in a hardened Docker sandbox
 - Pass → `deliverOrder` (release), Fail → `rejectOrder` (refund); immediate reject on provider failure
 - Nonce-safe serialized `payOrder` queue (one in-flight wallet tx at a time) and a single WebSocket per API key
 
 **Roadmap — NOT built:**
-- More policy evaluators: verify an image at a target resolution, check that cited URLs resolve, call an external oracle, multi-language sandboxes
+- More policy evaluators: call an external price/data oracle, verify a cryptographic signature/attestation, additional sandbox languages (Go, Rust)
 - Auto-remediation (retry / provider failover before refund) and best-of-N provider routing
 - Multi-juror weighted consensus / staking / slashing across independent validators
 - Historical precedent / case-law retrieval; continuous fraud-pattern learning
@@ -166,7 +170,7 @@ backend/src/
 │   ├── index.ts       # orchestrator: both roles on one WS, routes by job id
 │   ├── jobStore.ts    # in-memory job ledger, indexed by order/negotiation ids
 │   ├── policies.ts    # pluggable policy registry + evaluatePolicies engine
-│   ├── sandbox.ts     # hardened Docker runner for the code_tests policy
+│   ├── sandbox.ts     # hardened Docker runner for code_tests (Python + JavaScript)
 │   ├── qualityGate.ts # builds the policy bundle + runs the engine
 │   └── settlement.ts  # deliver/reject decision + on-chain audit log
 ├── demo-providers/
@@ -181,6 +185,7 @@ backend/src/
     ├── balances.ts     # on-chain USDC balances of the agent wallets
     ├── testPolicies.ts # offline policy-engine proof
     ├── testSandbox.ts  # offline sandbox proof (good / buggy / malicious)
+    ├── testExtras.ts   # offline proof: JS sandbox + url_resolve + image_min_resolution
     └── smoke.ts        # connectivity smoke test
 ```
 
@@ -188,7 +193,7 @@ backend/src/
 
 ## Setup
 
-Requires Node 18+, four registered CROO agents (Warden, Provider A, Provider B, Buyer), and — for the `code_tests` policy — Docker with the `python:3.11-slim` image (`docker pull python:3.11-slim`).
+Requires Node 18+, four registered CROO agents (Warden, Provider A, Provider B, Buyer), and — for the `code_tests` policy — Docker with the runtime images (`docker pull python:3.11-slim && docker pull node:20-slim`).
 
 ```bash
 cd backend
@@ -218,7 +223,7 @@ npm run buyer -- codebad  # BAD  (code) — non-code fails sandbox → refunded
 
 Services can also be run individually: `npm run warden`, `npm run providerA`, `npm run providerB`.
 
-Offline proofs (no funds, no chain): `npm run test:policies` and `npm run test:sandbox` (the latter needs Docker). Verify connectivity with `npm run check`; inspect balances with `npm run balances`.
+Offline proofs (no funds, no chain): `npm run test:policies`, `npm run test:sandbox`, and `npm run test:extras` (JS sandbox + URL/image policies; the sandbox tests need Docker, the URL test needs network). Verify connectivity with `npm run check`; inspect balances with `npm run balances`.
 
 > **One WebSocket per API key.** Never run two processes with the same key. Stop services with `Ctrl+C` (graceful close); a hard kill leaves the session held server-side and the next start is rejected with close code 1008 until it times out.
 

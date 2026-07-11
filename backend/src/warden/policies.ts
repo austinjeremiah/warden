@@ -1,5 +1,6 @@
+import { imageSize } from 'image-size';
 import { chat } from '../shared/groq.js';
-import { runCodeTests } from './sandbox.js';
+import { runCodeTests, SandboxLanguage } from './sandbox.js';
 
 /**
  * Pluggable policy engine — the heart of Warden's value proposition.
@@ -47,6 +48,49 @@ function stripFences(s: string): string {
   const t = (s ?? '').trim();
   const m = t.match(/^```[a-zA-Z0-9]*\n([\s\S]*?)\n```$/);
   return (m ? m[1] : t).trim();
+}
+
+/** True if the URL responds with HTTP < 400 (tries HEAD, falls back to GET). */
+async function urlResolves(url: string): Promise<boolean> {
+  const attempt = async (method: 'HEAD' | 'GET') => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 7000);
+    try {
+      const res = await fetch(url, { method, redirect: 'follow', signal: ctrl.signal });
+      return res.status < 400;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  if (await attempt('HEAD')) return true;
+  return attempt('GET'); // some servers reject HEAD
+}
+
+/** Load image bytes from a data URI, an http(s) URL, or raw base64. */
+async function loadImageBytes(s: string): Promise<Uint8Array | null> {
+  const t = s.trim();
+  const dataUri = t.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/s);
+  if (dataUri) return new Uint8Array(Buffer.from(dataUri[1], 'base64'));
+
+  const url = t.match(/https?:\/\/[^\s"'<>)\]]+/);
+  if (url) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      const res = await fetch(url[0].replace(/[.,;:]+$/, ''), { redirect: 'follow', signal: ctrl.signal });
+      if (!res.ok) return null;
+      return new Uint8Array(await res.arrayBuffer());
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  if (/^[A-Za-z0-9+/=\s]+$/.test(t) && t.length > 100) {
+    return new Uint8Array(Buffer.from(t.replace(/\s+/g, ''), 'base64'));
+  }
+  return null;
 }
 
 export const POLICY_REGISTRY: Record<string, Evaluator> = {
@@ -138,7 +182,8 @@ export const POLICY_REGISTRY: Record<string, Evaluator> = {
     const solution = stripFences(ctx.deliverableText);
     if (!solution) return { pass: false, reason: 'No code was delivered to test.' };
 
-    const res = await runCodeTests(solution, testsCode);
+    const language: SandboxLanguage = p.language === 'javascript' || p.language === 'js' ? 'javascript' : 'python';
+    const res = await runCodeTests(solution, testsCode, language);
     if (res.runnerError) return { pass: false, reason: `Sandbox error: ${res.runnerError}` };
     if (res.loadError) return { pass: false, reason: `Delivered code failed to load: ${res.loadError}` };
 
@@ -149,6 +194,45 @@ export const POLICY_REGISTRY: Record<string, Evaluator> = {
       pass: false,
       reason: `${res.passed.length}/${total} tests passed. First failure: ${first ? `${first.name} — ${first.error}` : 'no tests ran'}.`,
     };
+  },
+
+  // Verify that URLs cited in the delivery actually resolve (HTTP < 400).
+  // Use `urls` to pin an explicit list, else every http(s) URL in the text is checked.
+  url_resolve: async (p, ctx) => {
+    const explicit: string[] = Array.isArray(p.urls) ? p.urls.map(String) : [];
+    const found = [...text(ctx).matchAll(/https?:\/\/[^\s"'<>)\]]+/g)].map((m) => m[0].replace(/[.,;:]+$/, ''));
+    const urls = explicit.length ? explicit : Array.from(new Set(found));
+    const min = Number(p.min ?? 1);
+    if (urls.length < min) return { pass: false, reason: `Expected at least ${min} URL(s) to verify but found ${urls.length}.` };
+    for (const u of urls) {
+      if (!(await urlResolves(u))) return { pass: false, reason: `Cited URL does not resolve: ${u}` };
+    }
+    return { pass: true, reason: `All ${urls.length} cited URL(s) resolve.` };
+  },
+
+  // Verify a delivered image meets minimum pixel dimensions. The delivery may be
+  // a data URI, an image URL, or raw base64.
+  image_min_resolution: async (p, ctx) => {
+    const minW = Number(p.minWidth ?? 0);
+    const minH = Number(p.minHeight ?? 0);
+    let bytes: Uint8Array | null;
+    try {
+      bytes = await loadImageBytes(text(ctx));
+    } catch (e) {
+      return { pass: false, reason: `Could not load image: ${(e as Error).message}` };
+    }
+    if (!bytes) return { pass: false, reason: 'No image found in delivery (expected a URL, data URI, or base64).' };
+    let dim: { width?: number; height?: number };
+    try {
+      dim = imageSize(bytes);
+    } catch {
+      return { pass: false, reason: 'Delivered data is not a recognizable image.' };
+    }
+    if (!dim.width || !dim.height) return { pass: false, reason: 'Could not read image dimensions.' };
+    if (dim.width < minW || dim.height < minH) {
+      return { pass: false, reason: `Image ${dim.width}x${dim.height} is below required ${minW}x${minH}.` };
+    }
+    return { pass: true, reason: `Image ${dim.width}x${dim.height} meets minimum ${minW}x${minH}.` };
   },
 
   semantic: async (p, ctx) => {

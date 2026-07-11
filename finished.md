@@ -44,6 +44,13 @@ Escrow releases only on a green suite. `src/warden/sandbox.ts` + `code_tests` po
 - **GOOD code path (on-chain)** — Order A `f1d73efd` → `completed`. Provider A wrote real `is_palindrome` → sandbox ran buyer's 5 tests → all pass → delivered. Deliver tx `0xce958e45428aab1bb70ba4410028df147fd8184e15da8720c275a07c64fb15e4`.
 - **BAD code path (on-chain)** — Order A `c7fa2b0b` → `rejected`. Provider B delivered non-code → sandbox load `SyntaxError` → `policy: code_tests` failed → buyer refunded. Reject tx `0xf1234b2199e5831c8e2b5a8b96e73b98c6585829a8358400e67808973fc17f4f`.
 
+## ✅ v2.1 — additional policy evaluators
+
+- **`code_tests` is multi-language** — Python (`python:3.11-slim`) and JavaScript (`node:20-slim`), same hardened sandbox. `language` policy field selects the runtime.
+- **`url_resolve`** — every cited URL in the delivery must resolve (HTTP < 400); catches fabricated citations.
+- **`image_min_resolution`** — a delivered image (URL, data URI, or base64) must meet minimum pixel dimensions (`image-size`).
+- Offline proof (`npm run test:extras`): JS good passes / buggy fails, live URL resolves / `.invalid` fails, 1024x768 passes >= 800x600 / 320x240 fails. All wired into the same on-chain settlement path as the other policies.
+
 **Key integration findings (from live testing):**
 - CAP's Paymaster is a **USDC paymaster** — every agent wallet (incl. providers) needs a small USDC balance for gas, or accept/deliver fails with `PIMLICO_ERROR: sender has no balance of the token`.
 - `requirements` on `negotiateOrder` **must be valid JSON** (Warden now wraps the task as `{input}`).
