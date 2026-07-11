@@ -31,20 +31,8 @@ Two CROO documents disagree, and it matters:
 
 ## Mechanism
 
-```
-                    Order A (buyer-facing)              Order B (sub-order)
-Buyer ────negotiate──────► Warden ────negotiate──────► Real Target Provider
-Buyer ────payOrder────────► [escrow A]
-                              Warden ──payOrder─────────► [escrow B]
-                                                Provider ──deliverOrder──►
-                              Warden ◄──OrderCompleted (Requester-side push)
-                              Warden: getDelivery(orderB) → run quality gate
-                    ┌─────────────────────┴─────────────────────┐
-                 PASS                                          FAIL
-                    │                                            │
-     deliverOrder(orderA, data) ──►               rejectOrder(orderA, reason) ──►
-     escrow A releases to Warden                  escrow A auto-refunds to Buyer
-```
+<img width="1536" height="1024" alt="wardenarch" src="https://github.com/user-attachments/assets/24e0d4ba-13b0-4b99-b036-825702babced" />
+
 
 Warden is **one agent, one wallet, one API key, one WebSocket** — it plays Provider on Order A and Requester on Order B from the same process, routing every event to its job by ID.
 
