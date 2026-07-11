@@ -12,8 +12,9 @@ _Last updated: 2026-07-12_
 | 1 | Shared layer | env loader, tagged logger, client factory (1 WS/key), p-queue nonce guard, Groq wrapper |
 | 2 | Demo Provider A (good) + B (forced-bad toggle) | Groq-backed; B off-topic delivery is an honest test fixture |
 | 3 | Warden core orchestrator | both roles on one WS, event routing by job id, job store |
-| 4 | Quality gate | rules layer + Groq semantic layer, fails closed |
-| 5 | Settlement | pass→`deliverOrder`, fail→`rejectOrder`, on-chain audit log |
+| 4 | **Pluggable policy engine** | `policies.ts`: min/max_length, no_placeholder, contains/not_contains, regex, json_valid, json_fields, semantic — buyer attaches a bundle per order; domain-agnostic |
+| 4 | Offline policy test | ✅ `npx tsx src/scripts/testPolicies.ts` — good passes, off-topic fails on `contains`, empty fails on `no_placeholder`, JSON passes |
+| 5 | Settlement | pass→`deliverOrder`, fail→`rejectOrder`, on-chain audit log naming the deciding policy |
 | 6 | Demo buyer | good/bad mode (`npm run buyer` / `-- bad`) |
 | 8 | README + LICENSE (MIT) + this file | real-vs-roadmap, SDK methods, setup all documented |
 

@@ -14,13 +14,15 @@ export type JobStatus =
   | 'settled_fail' // gate failed; rejected Order A -> buyer refunded
   | 'error';
 
+import { Policy } from './policies.js';
+
 export interface Job {
   orderAId: string;
   negotiationAId: string;
   buyerInput: string;
   targetServiceId: string;
-  acceptanceCriteria: string;
-  requiredFields?: string[];
+  /** The resolved policy bundle Warden will enforce before releasing escrow. */
+  policies: Policy[];
   negotiationBId?: string;
   orderBId?: string;
   status: JobStatus;

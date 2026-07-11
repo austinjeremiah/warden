@@ -42,7 +42,7 @@ function audit(
 ): void {
   const record = {
     decision: outcome,
-    layer: gate.layer,
+    policy: gate.policy,
     reason: gate.reason,
     orderA: job.orderAId,
     orderB: job.orderBId,

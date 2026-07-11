@@ -28,11 +28,21 @@ async function main() {
   const key = required('BUYER_API_KEY');
   const { client, log } = makeClient(key, 'BUYER');
 
+  // Programmable quality policies attached to the order. Warden releases escrow
+  // only if EVERY policy passes. The off-topic bad-path delivery fails the
+  // deterministic `contains "Webb"` policy AND the semantic policy.
   const requirements = JSON.stringify({
     targetServiceId,
     input: `Summarize the following text in one clear sentence:\n\n${SAMPLE_TEXT}`,
-    acceptanceCriteria:
-      'A one-sentence summary that accurately captures the main point about the James Webb Space Telescope. Must be on-topic and factual.',
+    policies: [
+      { type: 'min_length', min: 20 },
+      { type: 'contains', value: 'Webb' },
+      {
+        type: 'semantic',
+        criteria:
+          'A one-sentence, on-topic, factual summary of the James Webb Space Telescope.',
+      },
+    ],
   });
 
   const stream = await client.connectWebSocket();

@@ -3,7 +3,8 @@ import { required } from '../shared/env.js';
 import { makeClient } from '../shared/client.js';
 import { enqueuePay } from '../shared/payQueue.js';
 import { JobStore, Job } from './jobStore.js';
-import { runQualityGate } from './qualityGate.js';
+import { Policy } from './policies.js';
+import { runQualityGate, buildPolicyBundle } from './qualityGate.js';
 import { settle } from './settlement.js';
 
 /**
@@ -23,8 +24,7 @@ import { settle } from './settlement.js';
 interface BuyerRequirements {
   targetServiceId: string;
   input: string;
-  acceptanceCriteria: string;
-  requiredFields?: string[];
+  policies: Policy[]; // resolved bundle Warden enforces before release
 }
 
 function parseBuyerRequirements(raw: string): BuyerRequirements | { error: string } {
@@ -32,21 +32,24 @@ function parseBuyerRequirements(raw: string): BuyerRequirements | { error: strin
   try {
     obj = JSON.parse(raw);
   } catch {
-    return { error: 'Requirements must be a JSON object with targetServiceId, input, acceptanceCriteria.' };
+    return { error: 'Requirements must be a JSON object with targetServiceId, input, and policies[] (or acceptanceCriteria).' };
   }
   if (!obj || typeof obj !== 'object') return { error: 'Requirements JSON must be an object.' };
   if (!obj.targetServiceId || typeof obj.targetServiceId !== 'string')
     return { error: 'Missing "targetServiceId" (the CAP serviceId to verify work from).' };
-  if (!obj.acceptanceCriteria || typeof obj.acceptanceCriteria !== 'string')
-    return { error: 'Missing "acceptanceCriteria" (what a correct result must contain).' };
   const input = typeof obj.input === 'string' ? obj.input : typeof obj.task === 'string' ? obj.task : '';
   if (!input) return { error: 'Missing "input" (the task to send the target provider).' };
-  return {
-    targetServiceId: obj.targetServiceId,
-    input,
-    acceptanceCriteria: obj.acceptanceCriteria,
+
+  const explicit = Array.isArray(obj.policies) ? (obj.policies as Policy[]) : undefined;
+  if ((!explicit || explicit.length === 0) && !obj.acceptanceCriteria) {
+    return { error: 'Provide either "policies" (a bundle of quality policies) or "acceptanceCriteria".' };
+  }
+  const policies = buildPolicyBundle({
+    policies: explicit,
+    acceptanceCriteria: typeof obj.acceptanceCriteria === 'string' ? obj.acceptanceCriteria : undefined,
     requiredFields: Array.isArray(obj.requiredFields) ? obj.requiredFields.map(String) : undefined,
-  };
+  });
+  return { targetServiceId: obj.targetServiceId, input, policies };
 }
 
 async function main() {
@@ -81,13 +84,14 @@ async function main() {
         negotiationAId: negId,
         buyerInput: parsed.input,
         targetServiceId: parsed.targetServiceId,
-        acceptanceCriteria: parsed.acceptanceCriteria,
-        requiredFields: parsed.requiredFields,
+        policies: parsed.policies,
         status: 'accepted',
         createdAt: Date.now(),
       };
       jobs.create(job);
-      log.info(`accepted Order A ${job.orderAId} (target=${job.targetServiceId}). Awaiting buyer payment.`);
+      log.info(
+        `accepted Order A ${job.orderAId} (target=${job.targetServiceId}, policies=[${job.policies.map((p) => p.type).join(', ')}]). Awaiting buyer payment.`,
+      );
     } catch (err) {
       log.error(`negotiation ${negId} handling failed:`, (err as Error).message);
     }
@@ -146,15 +150,14 @@ async function main() {
     try {
       job.status = 'validating';
       const delivery = await client.getDelivery(job.orderBId!);
-      log.info(`Order B ${job.orderBId} delivered. Running quality gate...`);
+      log.info(`Order B ${job.orderBId} delivered. Enforcing ${job.policies.length} quality policies...`);
       const gate = await runQualityGate({
         deliverableText: delivery.deliverableText,
         deliverableType: delivery.deliverableType,
-        acceptanceCriteria: job.acceptanceCriteria,
-        requiredFields: job.requiredFields,
         buyerInput: job.buyerInput,
+        policies: job.policies,
       });
-      log.info(`gate [${gate.layer}] -> ${gate.pass ? 'PASS' : 'FAIL'}: ${gate.reason}`);
+      log.info(`gate [policy:${gate.policy}] -> ${gate.pass ? 'PASS' : 'FAIL'}: ${gate.reason}`);
       await settle(client, log, job, delivery.deliverableText, gate);
     } catch (err) {
       log.error(`settlement failed for job ${job.orderAId}:`, (err as Error).message);

@@ -1,6 +1,10 @@
-# Warden — CAP Quality-Gated Escrow Proxy
+# Warden — Programmable Quality-Gated Escrow for CAP
 
-> CAP standardizes negotiation, escrow, delivery, and settlement — but once a Provider calls `deliverOrder`, funds release automatically with **zero Requester approval**. Warden is a CAP-native agent that sits between buyer and provider as **both Provider and Requester simultaneously**, enforcing a real quality gate using nothing but composed Orders, escrow, and the existing reject/refund path. No invented protocol features. No dispute state that doesn't exist. Just correct use of what CAP already ships.
+> **CAP moves money when work is _delivered_. Warden moves money only when work _satisfies programmable quality policies_.**
+
+CAP standardizes negotiation, escrow, delivery, and settlement — but once a Provider calls `deliverOrder`, funds release automatically with **zero Requester approval**. Warden is a CAP-native agent that sits between buyer and provider as **both Provider and Requester simultaneously**, and releases escrow only when the delivery satisfies a **pluggable bundle of quality policies** attached to the order — using nothing but composed Orders, escrow, and the existing reject/refund path. No invented protocol features. No dispute state that doesn't exist. Just correct use of what CAP already ships.
+
+Warden is **domain-agnostic**: quality isn't hardcoded, it's a data-driven policy bundle. A policy might require a JSON schema, a substring/citation, a regex format, a minimum length, or a semantic match against buyer criteria. Warden simply executes the bundle attached to the order.
 
 Built for the **CROO Agent Hackathon**. Runs on **Base Mainnet** with **real USDC** (chain 8453 — CAP has no testnet). Gas is sponsored via the Paymaster; agents hold only USDC.
 
@@ -52,14 +56,37 @@ Warden is **one agent, one wallet, one API key, one WebSocket** — it plays Pro
 
 ---
 
-## The quality gate (what's real, running today)
+## The policy engine (what's real, running today)
 
-Two layers, fail-fast:
+The buyer attaches a **policy bundle** to the order. Warden executes it fail-fast against the delivery and releases escrow only if **every** policy passes. Adding a new domain = registering a new policy evaluator; the core never changes.
 
-1. **Rules layer** (free, instant): non-empty, not a placeholder/error string, minimum length, and — if the buyer supplied `requiredFields` — valid JSON containing them.
-2. **Semantic layer** (one Groq call, `llama-3.3-70b-versatile`): a strict inspector decides whether the delivered result genuinely satisfies the buyer's stated `acceptanceCriteria`. Fails closed if the judge is unreachable — the buyer is protected by default.
+| Policy `type` | Checks |
+|---|---|
+| `min_length` / `max_length` | size bounds |
+| `no_placeholder` | not empty / error / garbage (always prepended as a baseline guard) |
+| `contains` / `not_contains` | required / forbidden substring (e.g. a citation) |
+| `regex` | pattern / format match |
+| `json_valid` | parses as JSON |
+| `json_fields` | JSON contains non-empty required fields |
+| `semantic` | one Groq call (`llama-3.3-70b-versatile`) judging the delivery against buyer criteria; **fails closed** if the judge is unreachable |
 
-Output is `{ pass, reason, layer }`. On failure, `reason` is a human-readable string passed directly into `rejectOrder`.
+Example bundle a buyer sends in the order requirements:
+
+```json
+{
+  "targetServiceId": "a4f6520b-...",
+  "input": "Summarize the following text in one sentence: ...",
+  "policies": [
+    { "type": "min_length", "min": 20 },
+    { "type": "contains", "value": "Webb" },
+    { "type": "semantic", "criteria": "A one-sentence, on-topic, factual summary." }
+  ]
+}
+```
+
+Output is `{ pass, reason, policy }` — `policy` names the deciding policy. On failure, `reason` is a human-readable string passed directly into `rejectOrder`. (Legacy `acceptanceCriteria` + `requiredFields` are still accepted and auto-synthesized into a bundle.)
+
+Run the offline proof (no funds, no chain): `npx tsx src/scripts/testPolicies.ts`.
 
 ---
 
@@ -72,11 +99,12 @@ Output is `{ pass, reason, layer }`. On failure, `reason` is a human-readable st
 - Nonce-safe serialized `payOrder` queue (Risk #3), single WS per key (Risk #2)
 
 **Roadmap — NOT built:**
+- Richer policy evaluators: run a passing test suite, verify an image at a target resolution, check citations resolve, call an external oracle
 - Multi-juror weighted consensus / staking / slashing across independent validators
 - Historical precedent / case-law retrieval
 - Continuous fraud-pattern learning
 
-These are the natural v2 once CAP exposes `evaluateOrder` to third-party builders — at which point Warden's validator logic plugs directly into the protocol-native DELIVER phase instead of requiring order composition.
+The policy engine is the extensibility surface: each of the above is a new evaluator registered in `policies.ts`, no core change. These are the natural v2 once CAP exposes `evaluateOrder` to third-party builders — at which point Warden's policy engine plugs directly into the protocol-native DELIVER phase instead of requiring order composition.
 
 **Honest caveats:** Deliverable integrity is a **keccak256 hash commitment** written on-chain — tamper-evident, *not* a zero-knowledge proof. Warden **absorbs the sub-order cost on a rejected job** (as Requester on B it cannot reject B's delivery — only the provider can; this is the honest economic cost of protecting the buyer). Demo providers and buyer are **our own seed agents**, disclosed as such.
 
@@ -103,7 +131,8 @@ backend/src/
 ├── warden/
 │   ├── index.ts       # orchestrator: both roles on one WS, routes by job id
 │   ├── jobStore.ts    # in-memory job ledger, indexed by order/negotiation ids
-│   ├── qualityGate.ts # rules layer + Groq semantic layer
+│   ├── policies.ts    # pluggable policy registry + evaluatePolicies engine
+│   ├── qualityGate.ts # builds the policy bundle + runs the engine
 │   └── settlement.ts  # deliver/reject decision + on-chain audit log
 ├── demo-providers/
 │   ├── providerBase.ts # shared provider runtime (Groq task)
